@@ -1,0 +1,2 @@
+canal_mas_contaminado,banda_mas_contaminada,ise_max,categoria_max,canal_menos_contaminado,banda_menos_contaminada,ise_min,categoria_min,canales_recomendados,canales_no_recomendados,espectro_util_mhz,espectro_perdido_mhz,pct_banda_inutilizable
+C,850 - 855 MHz,79.6,Saturado,A,840 - 845 MHz,30.5,Moderado,"['B', 'D', 'A']",['C'],15.0,5.0,25.0

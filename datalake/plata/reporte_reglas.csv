@@ -1,0 +1,12 @@
+regla,descripcion,severidad,mediciones_afectadas,porcentaje,archivos
+R1_ESTRUCTURA,Estructura columnar invalida,descarte,0,0.0,
+R2_COMPLETITUD,Valores faltantes o no finitos,imputable,0,0.0,
+R3_GPS_SIN_FIX,GPS sin solucion de navegacion (lat=lon=0),imputable,2,3.17,"008.txt, medidaprueba.txt"
+R4_GPS_FUERA_RANGO,Georreferenciacion fuera del area de estudio,imputable,0,0.0,
+R5_GPS_IMPRECISO,Error de distancia GPS elevado,aviso,2,3.17,"008.txt, 017.txt"
+R6_RANGO_FISICO,Potencia fuera del rango util del receptor,descarte,1,1.59,016.txt
+R7_NIVEL_ANOMALO,Traza desplazada en nivel (error de ganancia),descarte,1,1.59,016.txt
+R8_TRAZA_PLANA,Traza sin variacion espectral (receptor congelado),descarte,0,0.0,
+R9_FUGA_LO_DC,Fuga de oscilador local en el bin central,imputable,28,44.44,"003.txt, 004.txt, 005.txt, 007.txt, 008.txt, 009.txt, 010.txt, 011.txt"
+R10_TEMP_OPERACION,Temperatura del sensor fuera de operacion,aviso,2,3.17,"medidaprueba.txt, medidapureba2.txt"
+R11_NO_CAMPANA,Archivo de prueba ajeno a la campana,descarte,2,3.17,"medidaprueba.txt, medidapureba2.txt"

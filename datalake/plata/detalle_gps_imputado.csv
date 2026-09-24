@@ -1,0 +1,7 @@
+archivo,campo,valor_original,valor_imputado,tecnica
+008.txt,longitud,0.0,-75.60079,T2_interp_lineal_ruta
+017.txt,longitud,-75.584725,-75.58628444443333,T2_interp_lineal_ruta
+008.txt,latitud,0.0,6.22636,T2_interp_lineal_ruta
+017.txt,latitud,6.198835,6.199575000003334,T2_interp_lineal_ruta
+008.txt,altura,0.0,1545.0,T2_interp_lineal_ruta
+017.txt,altura,1565.0,1529.8,T2_interp_lineal_ruta

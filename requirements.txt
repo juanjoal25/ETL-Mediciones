@@ -1,0 +1,22 @@
+# Dependencias del estudio de ocupacion espectral 840-860 MHz
+# Instalacion:  pip install -r requirements.txt
+#
+# Las versiones indicadas son las verificadas en el entorno de desarrollo
+# (Python 3.13.15). Los minimos declarados son los que realmente exige el
+# codigo; versiones superiores deberian funcionar sin cambios.
+
+# --- Nucleo numerico y de datos -------------------------------------------
+numpy>=1.24            # algebra, FFT, estadistica vectorizada
+pandas>=2.0            # dataframes y persistencia del datalake
+scipy>=1.10            # griddata (interpolacion), optimize, stats
+pyarrow>=12.0          # backend Parquet de las capas bronce/plata/oro
+
+# --- Figuras del informe ---------------------------------------------------
+matplotlib>=3.7        # las 10 graficas PNG embebidas en el Word
+
+# --- Dashboard web ---------------------------------------------------------
+plotly>=5.18           # graficas interactivas; >=6 para go.Scattermap
+dash>=2.14             # servidor web (arrastra Flask como dependencia)
+
+# --- Informe entregable ----------------------------------------------------
+python-docx>=1.0       # generacion del documento .docx

@@ -1,0 +1,7 @@
+dimension,valor_pct,definicion
+Completitud,100.0,Celdas presentes y finitas sobre el total
+Validez,99.97,Muestras dentro del rango fisico del receptor
+Unicidad,100.0,Mediciones no duplicadas
+Consistencia,95.24,Mediciones sin defecto de severidad alta
+Exactitud,95.24,Mediciones con georreferenciacion confiable
+INDICE GLOBAL,98.09,Promedio de las cinco dimensiones

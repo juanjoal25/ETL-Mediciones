@@ -1,0 +1,4 @@
+archivo,reglas_activas,detalle
+016.txt,R6_RANGO_FISICO;R7_NIVEL_ANOMALO,pico=-3.6 dBm | mediana=-27.7 dBm (z=2.7)
+medidaprueba.txt,R3_GPS_SIN_FIX;R9_FUGA_LO_DC;R10_TEMP_OPERACION;R11_NO_CAMPANA,DC +26.3 dB | T=35.2 C
+medidapureba2.txt,R10_TEMP_OPERACION;R11_NO_CAMPANA,T=38.1 C
