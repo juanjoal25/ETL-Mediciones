@@ -185,14 +185,31 @@ def aplicar_modelo(resumen_canales):
     return D
 
 
-def recomendacion_global(D):
-    """Redacta el juicio de valor consolidado que se entrega a la Agencia."""
+def recomendacion_global(D, resumen=None):
+    """
+    Redacta el juicio de valor consolidado que se entrega a la Agencia.
+
+    Incorpora la significancia estadistica: con solo 60 mediciones, el orden de
+    preferencia entre canales puede no ser distinguible del azar de muestreo, y
+    presentarlo como firme seria enganoso. Si los intervalos de Wilson de dos
+    canales se solapan, la Agencia debe saber que esa diferencia no esta
+    respaldada por la muestra.
+    """
     peor = D.iloc[0]
     mejor = D.iloc[-1]
     asignables = D[D.decision.str.startswith("ASIGNAR")]["canal"].tolist()
     no_asignables = D[D.decision == "NO ASIGNAR"]["canal"].tolist()
 
+    empatados = []
+    if resumen is not None and "ocup_ic_bajo" in resumen.columns:
+        R = resumen.sort_values("pct_puntos_ocupados", ascending=False).reset_index(drop=True)
+        limpio = R.iloc[-1]
+        empatados = [f.canal for _, f in R.iterrows()
+                     if f.canal != limpio.canal and f.ocup_ic_bajo <= limpio.ocup_ic_alto]
+
     return {
+        "canales_indistinguibles_del_mejor": empatados,
+        "orden_estadisticamente_firme": len(empatados) == 0,
         "canal_mas_contaminado": peor["canal"],
         "banda_mas_contaminada": peor["banda"],
         "ise_max": peor["ISE"],
@@ -229,7 +246,7 @@ def main():
         print("    DECISION            : %s  [prioridad %s]" % (f.decision, f.prioridad))
         print("    Accion              : %s\n" % f.accion)
 
-    G = recomendacion_global(D)
+    G = recomendacion_global(D, res)
     print("  RECOMENDACION GLOBAL A LA ANE")
     print("    Mas contaminado  : canal %s (%s) ISE %.1f - %s"
           % (G["canal_mas_contaminado"], G["banda_mas_contaminada"], G["ise_max"], G["categoria_max"]))
@@ -240,6 +257,18 @@ def main():
     print("    Espectro util    : %.0f MHz de %.0f MHz (%.0f %% inutilizable)"
           % (G["espectro_util_mhz"], G["espectro_util_mhz"] + G["espectro_perdido_mhz"],
              G["pct_banda_inutilizable"]))
+
+    emp = G["canales_indistinguibles_del_mejor"]
+    print("\n  SIGNIFICANCIA ESTADISTICA DEL ORDEN")
+    if emp:
+        print("    Los canales %s NO se distinguen del canal %s al 95 %%: sus intervalos"
+              % (", ".join(emp), G["canal_menos_contaminado"]))
+        print("    de Wilson se solapan. El orden de preferencia entre ellos es una")
+        print("    estimacion puntual, no un resultado respaldado por la muestra.")
+        print("    Lo unico que la campana sostiene con firmeza es la separacion del canal %s."
+              % G["canal_mas_contaminado"])
+    else:
+        print("    El orden entre canales es estadisticamente firme al 95 %.")
 
     D.to_csv(os.path.join(cfg.LAKE_ORO, "decisiones_canales.csv"), index=False, encoding="utf-8")
     pd.DataFrame([G]).to_csv(os.path.join(cfg.LAKE_ORO, "recomendacion_global.csv"),

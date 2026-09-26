@@ -1,43 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-app.py - DASHBOARD INTERACTIVO DE OCUPACION ESPECTRAL SOBRE SERVIDOR WEB
-
-Programa entregable del Examen 3. Levanta un servidor web (Dash sobre Flask)
-que publica el resultado del proceso de ETL para la Agencia Nacional del
-Espectro.
-
-VISTAS EXIGIDAS POR EL ENUNCIADO
---------------------------------
-  - Ubicacion de las mediciones                     -> pestana "Mediciones"
-  - Ruta de las mediciones                          -> pestana "Mediciones"
-  - Mapa de calor por canal A, B, C y D             -> pestana "Mapas de calor"
-  - Mapa de calor de la temperatura del sensado     -> pestana "Mapas de calor"
-  - Mapa de calor de la frecuencia mas contaminada  -> pestana "Mapas de calor"
-  - Fuentes extrapoladas (bonificacion)             -> superpuestas en los mapas
-
-ARQUITECTURA
-------------
-El dashboard consume EXCLUSIVAMENTE la capa oro del datalake. No recalcula
-nada: la visualizacion queda desacoplada del procesamiento, de modo que si el
-ETL se vuelve a ejecutar con datos nuevos el dashboard los refleja sin tocar
-una linea de su codigo. Es el patron "DATA-CACHE + MODELO -> VIZ" de la
-arquitectura de referencia de la asignatura.
-
-LEGIBILIDAD DE LOS MAPAS
-------------------------
-La potencia no se pinta con una rampa continua sino con BANDAS DISCRETAS de
-limites fijos y absolutos, con un corte perceptual duro (azul claro -> amarillo)
-justo en el umbral de -60 dBm que define la ocupacion. Asi el lector distingue
-de un vistazo la zona libre de la contaminada, y como los limites son los
-mismos para los cuatro canales, los cuatro mapas son directamente comparables
-entre si.
-
-EJECUCION
----------
-    python dashboard/app.py
-    Abrir http://127.0.0.1:8050 en el navegador.
-"""
-
 import os
 import sys
 
@@ -407,11 +367,12 @@ def fig_mapa_calor(capa):
             text=["Fuente estimada"], textposition="top right",
             textfont=dict(color=es.ACENTO, size=12.5, family=es.FUENTE),
             name="Fuente extrapolada",
-            hovertemplate=("<b>Fuente extrapolada</b><br>"
-                           "%.6f, %.6f<br>%s a %.2f km del centro de la ruta<br>"
-                           "R2 %.3f  ·  RMSE %.2f dB  ·  confianza %s<extra></extra>")
-                          % (f.latitud, f.longitud, f.rumbo,
-                             f.distancia_al_centroide_m / 1000.0, f.r2, f.rmse_db,
+            hovertemplate=("<b>Emisor estimado</b><br>"
+                           "%.6f, %.6f<br>%s a %.0f m del foco (%s)<br>"
+                           "gradiente %.2f  ·  R2 %.3f  ·  RMSE %.2f dB<br>"
+                           "Confianza %s<extra></extra>")
+                          % (f.latitud, f.longitud, f.rumbo, f.dist_al_foco_m,
+                             f.foco, f.corr_gradiente, f.r2, f.rmse_db,
                              f.confianza)))
 
     _mapa_base(fig, lat, lon, titulo, subtitulo)
@@ -589,13 +550,26 @@ def fig_comparativa_canales():
 
 
 def fig_extension():
-    D = DATOS["decisiones"].sort_values("ISE", ascending=False)
+    """
+    Ocupacion territorial con su intervalo de confianza del 95 %.
+
+    Las barras de error no son decorativas: con solo 60 mediciones son lo que
+    permite ver que la diferencia entre tres de los canales cabe dentro del
+    azar de muestreo, y que solo uno se separa de verdad.
+    """
+    R = DATOS["resumen"].sort_values("pct_puntos_ocupados", ascending=False)
     fig = go.Figure(go.Bar(
-        x=D.canal, y=D.pct_puntos_ocupados, width=0.52,
-        marker=dict(color=[es.COLOR_CANAL[c] for c in D.canal], line=dict(width=0)),
-        text=["<b>%.1f %%</b>" % v for v in D.pct_puntos_ocupados],
+        x=R.canal, y=R.pct_puntos_ocupados, width=0.52,
+        marker=dict(color=[es.COLOR_CANAL[c] for c in R.canal], line=dict(width=0)),
+        error_y=dict(type="data", symmetric=False,
+                     array=(R.ocup_ic_alto - R.pct_puntos_ocupados).tolist(),
+                     arrayminus=(R.pct_puntos_ocupados - R.ocup_ic_bajo).tolist(),
+                     color=es.TINTA_2, thickness=1.4, width=9),
+        text=["<b>%.1f %%</b>" % v for v in R.pct_puntos_ocupados],
         textposition="outside", textfont=dict(size=13.5, color=es.TINTA),
-        hovertemplate="Canal %{x}<br>%{y:.1f} %% del area<extra></extra>"))
+        customdata=np.column_stack([R.ocup_ic_bajo, R.ocup_ic_alto]),
+        hovertemplate="Canal %{x}<br>%{y:.1f} %% del area<br>"
+                      "IC 95 %%: %{customdata[0]:.1f} – %{customdata[1]:.1f} %%<extra></extra>"))
     for y, txt, color in [(cfg.OCUPACION_CONGESTIONADO, "Congestionado", es.ROJO),
                           (cfg.OCUPACION_ALTA, "Uso intensivo", es.AMBAR),
                           (cfg.OCUPACION_MODERADA, "Uso ligero", es.VERDE)]:
@@ -604,7 +578,8 @@ def fig_extension():
                       annotation_position="top left",
                       annotation_font=dict(size=10.5, color=color))
     _plantilla(fig, alto=430, titulo="Extension territorial",
-               subtitulo="Puntos de la ruta por encima de -60 dBm  ·  umbrales UIT-R SM.1880")
+               subtitulo="Puntos por encima de -60 dBm con intervalo de Wilson al 95 %  ·  "
+                         "umbrales UIT-R SM.1880")
     fig.update_yaxes(title="% de la ruta", range=[0, 112])
     fig.update_xaxes(title="")
     return fig
@@ -735,13 +710,15 @@ def tabla_fuentes():
         nombre = "Canal %s" % f.canal if f.canal != "F_MAX" else "Frecuencia %s" % f.banda
         filas.append([
             html.Span(nombre, style={"fontWeight": "600"}),
-            "%.6f" % f.latitud, "%.6f" % f.longitud, f.rumbo,
-            "%.2f km" % (f.distancia_al_centroide_m / 1000.0),
-            "%.2f dB" % f.rmse_db, "%.3f" % f.r2,
+            f.foco, "%d" % f.n_focos,
+            "%.6f" % f.latitud, "%.6f" % f.longitud,
+            "%s %.0f m" % (f.rumbo, f.dist_al_foco_m),
+            "%+.2f" % f.corr_gradiente, "%.3f" % f.r2, "%.1f dB" % f.rmse_db,
             insignia(f.confianza, colores[f.confianza]),
         ])
-    return tabla(["Objetivo", "Latitud", "Longitud", "Rumbo", "Distancia",
-                  "RMSE", "R2", "Confianza"], filas, alineacion_num={1, 2, 4, 5, 6})
+    return tabla(["Objetivo", "Foco", "Nº focos", "Latitud", "Longitud",
+                  "Emisor respecto al foco", "Gradiente", "R2", "RMSE", "Confianza"],
+                 filas, alineacion_num={2, 3, 4, 6, 7, 8})
 
 
 def bloque_calidad():
@@ -890,8 +867,11 @@ app.layout = html.Div([
                     className="tab-item", selected_className="tab-item--sel", children=[
                 html.Div(style={"height": "26px"}),
                 panel("Indicadores por canal",
-                      "El modelo traduce cada estimacion numerica en una hipotesis booleana "
-                      "y cada hipotesis en una accion administrativa concreta.",
+                      "El modelo traduce cada estimacion numerica en una hipotesis booleana y cada "
+                      "hipotesis en una accion administrativa concreta. Las barras de error de la "
+                      "tercera grafica muestran que, con 60 mediciones, solo el canal C se separa "
+                      "estadisticamente del resto: el orden entre los otros tres cabe dentro del "
+                      "margen de muestreo.",
                       html.Div([
                           html.Div([
                               html.Div(dcc.Graph(figure=fig_ise(), config=GRAFICO),
@@ -914,10 +894,12 @@ app.layout = html.Div([
                     className="tab-item", selected_className="tab-item--sel", children=[
                 html.Div(style={"height": "26px"}),
                 panel("Fuentes de contaminacion estimadas por extrapolacion",
-                      "Multilateracion sobre el nivel de senal recibida con modelo "
-                      "log-distancia P(d) = P0 − 10·n·log10(d/d0), n = %.1f, ajustado por "
-                      "minimos cuadrados no lineales sobre los 12 puntos de mayor potencia "
-                      "de cada canal." % cfg.EXP_PERDIDA_N,
+                      "La contaminacion no proviene de un emisor aislado sino de una RED: un "
+                      "ajuste de fuente unica sobre los 60 puntos explica menos del 13 %% de la "
+                      "varianza en los cuatro canales. Por eso la localizacion se hace foco a "
+                      "foco, ajustando el modelo log-distancia "
+                      "P(d) = P0 − 10·n·log10(d/d0), n = %.1f, sobre los puntos del entorno "
+                      "del maximo dominante." % cfg.EXP_PERDIDA_N,
                       html.Div([
                           tabla_fuentes(),
                           html.Div(style={"height": "26px"}),

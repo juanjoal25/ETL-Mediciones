@@ -106,7 +106,77 @@ def indicadores_por_medicion(df):
     # Canal mas fuerte en cada punto: sirve para el mapa de dominancia
     p_cols = ["P_%s_dbm" % c for c in cfg.CANALES]
     salida["canal_dominante"] = salida[p_cols].idxmax(axis=1).str[2]
+
+    # Contaminacion total del punto: suma en potencia LINEAL de los cuatro
+    # canales. Permite rankear los puntos de la ruta entre si y comprobar que
+    # los focos que usa la localizacion de fuentes son efectivamente los mas
+    # contaminados del recorrido.
+    total_mw = sum(dbm_a_mw(salida["P_%s_dbm" % c]) for c in cfg.CANALES)
+    salida["P_total_dbm"] = mw_a_dbm(total_mw)
     return salida
+
+
+def puntos_mas_contaminados(ind):
+    """
+    Ranking de los puntos de la ruta por contaminacion total, y en cuantos
+    canales cada uno resulta ser el maximo.
+
+    Es la comprobacion de coherencia entre el analisis de ocupacion y la
+    localizacion de fuentes: los focos de los que parte la extrapolacion deben
+    ser precisamente los puntos que este ranking situa arriba.
+    """
+    R = ind.sort_values("P_total_dbm", ascending=False).copy()
+    veces = {}
+    for canal in cfg.CANALES:
+        arch = ind.loc[ind["P_%s_dbm" % canal].idxmax(), "archivo"]
+        veces[arch] = veces.get(arch, 0) + 1
+    R["n_canales_donde_es_maximo"] = R["archivo"].map(veces).fillna(0).astype(int)
+    cols = ["archivo", "orden", "latitud", "longitud", "P_total_dbm",
+            "n_canales_donde_es_maximo"] + ["P_%s_dbm" % c for c in cfg.CANALES]
+    return R[cols].reset_index(drop=True)
+
+
+def intervalo_wilson(k, n, z=1.96):
+    """
+    Intervalo de confianza del 95 % de una proporcion, por el metodo de Wilson.
+
+    La ocupacion de un canal es una proporcion estimada sobre solo 60 puntos, de
+    modo que tiene incertidumbre y conviene declararla: sin ella no se puede
+    saber que diferencias entre canales son reales y cuales caben dentro del
+    ruido de muestreo.
+
+    Se usa Wilson y no la aproximacion normal habitual porque esta ultima se
+    comporta mal con proporciones cercanas a 0 o a 1 y puede producir limites
+    fuera del intervalo [0, 1], justamente el caso del canal mas contaminado.
+
+        centro = (p + z^2/2n) / (1 + z^2/n)
+        mitad  = z*sqrt( p(1-p)/n + z^2/4n^2 ) / (1 + z^2/n)
+    """
+    if n == 0:
+        return (np.nan, np.nan)
+    p = k / n
+    den = 1.0 + z ** 2 / n
+    centro = (p + z ** 2 / (2 * n)) / den
+    mitad = z * np.sqrt(p * (1 - p) / n + z ** 2 / (4 * n ** 2)) / den
+    return (100.0 * max(centro - mitad, 0.0), 100.0 * min(centro + mitad, 1.0))
+
+
+def canales_indistinguibles(R):
+    """
+    Determina que canales NO se distinguen estadisticamente del mas limpio.
+
+    Dos canales son indistinguibles al 95 % si sus intervalos de Wilson se
+    solapan. Es la comprobacion que impide presentar como un orden firme lo que
+    en realidad es un empate dentro del margen de error de la muestra.
+    """
+    limpio = R.iloc[-1]
+    solapan = []
+    for _, f in R.iterrows():
+        if f.canal == limpio.canal:
+            continue
+        if f.ocup_ic_bajo <= limpio.ocup_ic_alto:
+            solapan.append(f.canal)
+    return solapan
 
 
 def resumen_por_canal(ind):
@@ -125,6 +195,8 @@ def resumen_por_canal(ind):
         ocup = ind["Ocup_%s_pct" % canal].to_numpy()
         ocupado = ind["Ocupado_%s" % canal].to_numpy()
 
+        ic_bajo, ic_alto = intervalo_wilson(int(ocupado.sum()), len(ocupado))
+
         filas.append({
             "canal": canal,
             "f_inicio_mhz": f_ini / 1e6,
@@ -136,6 +208,9 @@ def resumen_por_canal(ind):
             "P_min_dbm": float(p_dbm.min()),
             "pct_puntos_ocupados": 100.0 * ocupado.mean(),
             "n_puntos_ocupados": int(ocupado.sum()),
+            "n_puntos": int(len(ocupado)),
+            "ocup_ic_bajo": ic_bajo,
+            "ocup_ic_alto": ic_alto,
             "ocupacion_espectral_pct": float(ocup.mean()),
             "n_puntos_dominante": int((ind["canal_dominante"] == canal).sum()),
         })
@@ -215,20 +290,33 @@ def main():
     peor, mejor, perfil = frecuencias_extremas(perfil)
 
     print("\n  RESUMEN POR CANAL (ordenado de mas a menos contaminado)")
-    print("  %-6s %-14s %11s %11s %11s %9s %9s" %
-          ("canal", "banda MHz", "P_med dBm", "P_mediana", "P_max", "%pts occ", "%ocup esp"))
+    print("  %-6s %-14s %11s %11s %9s %18s" %
+          ("canal", "banda MHz", "P_med dBm", "P_mediana", "%pts occ", "IC95 ocupacion"))
     for _, f in res.iterrows():
-        print("  %-6s %5.0f - %-6.0f %11.2f %11.2f %11.2f %8.1f%% %8.1f%%"
+        print("  %-6s %5.0f - %-6.0f %11.2f %11.2f %8.1f%% %8.1f - %-7.1f %%"
               % (f.canal, f.f_inicio_mhz, f.f_fin_mhz, f.P_media_dbm,
-                 f.P_mediana_dbm, f.P_max_dbm, f.pct_puntos_ocupados,
-                 f.ocupacion_espectral_pct))
+                 f.P_mediana_dbm, f.pct_puntos_ocupados, f.ocup_ic_bajo, f.ocup_ic_alto))
+
+    indist = canales_indistinguibles(res)
+    print("\n  Canales que NO se distinguen del mas limpio (canal %s) al 95%%: %s"
+          % (res.iloc[-1].canal, ", ".join(indist) if indist else "ninguno"))
+    print("  (sus intervalos de Wilson se solapan: la diferencia cabe dentro del")
+    print("   margen de muestreo de %d mediciones)" % int(res.iloc[0].n_puntos))
 
     print("\n  Frecuencia MAS contaminada : %.4f MHz (bin %d) -> %.2f dBm, ocupada en %.1f%% de la ruta"
           % (peor.frecuencia_mhz, peor.bin, peor.P_media_dbm, peor.ocupacion_pct))
     print("  Frecuencia MENOS contaminada: %.4f MHz (bin %d) -> %.2f dBm, ocupada en %.1f%% de la ruta"
           % (mejor.frecuencia_mhz, mejor.bin, mejor.P_media_dbm, mejor.ocupacion_pct))
 
+    ranking = puntos_mas_contaminados(ind)
+    print("\n  PUNTOS MAS CONTAMINADOS DE LA CAMPANA (suma de los cuatro canales)")
+    for _, f in ranking.head(5).iterrows():
+        print("    %-10s %8.2f dBm total | es el maximo en %d de los 4 canales | %.6f, %.6f"
+              % (f.archivo, f.P_total_dbm, f.n_canales_donde_es_maximo, f.latitud, f.longitud))
+
     ind.to_parquet(os.path.join(cfg.LAKE_ORO, "indicadores_por_punto.parquet"), index=False)
+    ranking.to_csv(os.path.join(cfg.LAKE_ORO, "puntos_mas_contaminados.csv"),
+                   index=False, encoding="utf-8")
     res.to_csv(os.path.join(cfg.LAKE_ORO, "resumen_canales.csv"), index=False, encoding="utf-8")
     perfil.to_parquet(os.path.join(cfg.LAKE_ORO, "perfil_espectral.parquet"), index=False)
     pd.DataFrame([

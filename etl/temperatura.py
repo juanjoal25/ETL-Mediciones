@@ -108,9 +108,9 @@ def ols(y, X, nombres):
 def metricas_de_calidad(df_crudo, banderas):
     """
     Construye, por medicion, las metricas de calidad que se van a contrastar
-    contra la temperatura. Se calculan sobre el espectro CRUDO (sin censurar),
-    porque la regla -65/-95 destruiria justamente la informacion del piso de
-    ruido que se quiere estudiar.
+    contra la temperatura. Se calculan sobre el espectro CRUDO, antes de la
+    calibracion de antena, para que la deriva instrumental que se quiere medir
+    no quede mezclada con una correccion aplicada por el propio proceso.
     """
     cols = [c for c in df_crudo.columns if c.startswith("bin_")]
     S = df_crudo[cols].to_numpy(dtype=float)

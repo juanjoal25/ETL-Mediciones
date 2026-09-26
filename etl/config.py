@@ -57,10 +57,8 @@ CANALES = {
 }
 
 # ---------------------------------------------------------------------------
-# REGLAS DE NEGOCIO DEL ENUNCIADO
+# REGLA DE NEGOCIO DEL ESTUDIO
 # ---------------------------------------------------------------------------
-UMBRAL_PISO_DBM = -65.0         # "cambia los datos menores a -65.0 ..."
-VALOR_PISO_DBM = -95.0          # "... por el valor de -95.0"
 UMBRAL_OCUPACION_DBM = -60.0    # canal ocupado/contaminado si supera -60 dBm
 
 # ---------------------------------------------------------------------------

@@ -3,4 +3,3 @@ P0_DESCARTE,Eliminacion de registro,mediciones,3,"Dictamen DESCARTADA: fuera de 
 P1_FUGA_LO,T1 Interpolacion lineal en potencia (eje frecuencia),celdas espectrales,81,"Offset DC del receptor zero-IF en el bin 512 (850.000 MHz), frontera B/C",0.125
 P2_GEORREFERENCIACION,T2 Interpolacion lineal sobre la secuencia de la ruta,celdas de metadato,6,GPS sin solucion de navegacion o error de distancia (HDOP) por encima de 2.0,0.009
 P3_CALIBRACION_ANTENA,T3 De-embedding de la perdida por desacople (S11),celdas espectrales,61440,Compensacion del gradiente de 0.69 dB entre 840 y 860 MHz medido con el Agilent N9914A,94.775
-P4_REGLA_PISO,T4 Sustitucion por constante (censura de piso de ruido),celdas espectrales,32082,Regla del enunciado: muestras < -65.0 dBm se llevan a -95.0 dBm,49.489

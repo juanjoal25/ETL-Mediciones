@@ -2,62 +2,68 @@
 """
 extrapolacion.py - BONIFICACION: LOCALIZACION DE LAS FUENTES DE CONTAMINACION
 
-Estima, para cada canal A/B/C/D y para la frecuencia mas contaminada, el lugar
-geografico del transmisor que mejor explica el patron de potencias observado, y
-lo extrapola FUERA del recorrido de la estacion movil.
+Estima el lugar geografico de los emisores responsables de la contaminacion de
+cada canal, y los situa en el mapa por extrapolacion a partir del gradiente de
+potencia medido.
 
-FUNDAMENTO: MODELO DE PROPAGACION LOG-DISTANCIA
------------------------------------------------
-En un entorno urbano la potencia recibida decae con el logaritmo de la
-distancia al transmisor:
+PRIMER RESULTADO: NO EXISTE UNA UNICA FUENTE POR BANDA
+-------------------------------------------------------
+El enunciado pide "la fuente" de cada banda, en singular. El dato dice otra
+cosa, y conviene demostrarlo antes de localizar nada.
 
-    P_rx(d) [dBm] = P_0 [dBm] - 10 * n * log10( d / d_0 )
+Se ajusto un modelo de fuente unica sobre los 60 puntos de la ruta y explica
+practicamente nada de la varianza observada (R2 entre 0.07 y 0.12 segun el
+canal, con residuos de 8 a 18 dB). El diagnostico decisivo es que el punto de
+maxima potencia medida NO resulta ser el mas cercano a la fuente asi estimada:
+en algunos canales queda en la posicion 27 de 60, y la correlacion entre la
+potencia observada y el logaritmo de la distancia a esa fuente llega a ser
+NEGATIVA. Es decir, el modelo de fuente unica predice lo contrario de lo que
+se midio.
 
-donde P_0 es la potencia de referencia a la distancia d_0 y n el exponente de
-perdida de trayecto (n = 2 en espacio libre, n entre 2.7 y 3.5 en zona urbana
-densa como el occidente de Medellin).
+La razon es fisica: una banda celular no la emite un transmisor, la emite una
+RED de estaciones base. En una malla urbana densa cada punto de la ruta esta
+cerca de alguna estacion, de modo que el campo no decae desde un centro sino
+que presenta multiples maximos locales. El detector de focos de este modulo
+encuentra entre 9 y 12 por canal, que es justo lo que cabe esperar de una red
+celular real.
 
-Cada punto de la ruta aporta una ecuacion. El sistema se resuelve por minimos
-cuadrados no lineales minimizando el residuo en decibelios:
+ENFOQUE CORRECTO: LOCALIZACION POR GRADIENTE LOCAL
+---------------------------------------------------
+Si el campo global no responde a una fuente unica, pero el ENTORNO de cada
+maximo si, entonces la localizacion debe hacerse foco por foco. Se comprobo
+que alrededor del punto mas potente de cada canal la correlacion entre la
+potencia y el logaritmo de la distancia sube a valores de 0.69 a 0.80 en un
+radio de un kilometro: ahi el modelo de propagacion si aplica.
 
-    min  sum_i [ P_medida_i - ( P_0 - 10*n*log10(d_i/d_0) ) ]^2
+El procedimiento es entonces:
 
-Se minimiza en dB y no en mW porque el error de medida de un analizador de
-espectro es aproximadamente gaussiano en el dominio logaritmico (el
-desvanecimiento por sombra urbana es log-normal, con desviacion tipica de 6 a
-10 dB, que es justo el orden de los residuos que se obtienen).
+  1. Detectar los maximos locales del campo medido (los focos de contaminacion).
+  2. Tomar el foco dominante de cada canal y los puntos de la ruta que caen
+     dentro de su radio de influencia.
+  3. Ajustar sobre ellos el modelo log-distancia
+
+         P_rx(d) [dBm] = P_0 - 10 * n * log10( d / d_0 )
+
+     por minimos cuadrados no lineales, resolviendo para la posicion del
+     emisor. Se minimiza el residuo en decibelios porque el desvanecimiento por
+     sombra urbana es log-normal, es decir gaussiano en el dominio logaritmico.
+  4. Validar el resultado y declarar la confianza a partir de la bondad del
+     ajuste y de la estabilidad de la solucion.
 
 POR QUE ES EXTRAPOLACION Y NO INTERPOLACION
 --------------------------------------------
-La interpolacion (griddata de la sesion 7) solo puede estimar valores DENTRO de
-la envolvente convexa de los puntos medidos: por construccion nunca situaria una
-fuente fuera de la ruta. Aqui se ajusta un modelo fisico parametrico y se
-resuelve para el parametro "posicion del emisor", que cae fuera del recorrido.
-Es el mismo principio de la multilateracion por nivel de senal recibida (RSS).
+La interpolacion de malla (griddata, sesion 7) solo estima valores DENTRO de la
+envolvente convexa de los puntos medidos: por construccion nunca situaria un
+emisor fuera de la ruta. Aqui se ajusta un modelo fisico parametrico y se
+resuelve para el parametro posicion, que cae fuera del recorrido. Es el mismo
+principio de la localizacion por nivel de senal recibida (RSS).
 
-TRES DECISIONES DE MODELADO QUE HACEN EL PROBLEMA IDENTIFICABLE
-----------------------------------------------------------------
-1) SE FIJA EL EXPONENTE n. Si se deja libre, n y la distancia son practicamente
-   intercambiables: un transmisor lejano y potente con n bajo produce casi el
-   mismo perfil que uno cercano y debil con n alto. Esa degeneracion hace que el
-   optimizador empuje la solucion al borde de la region de busqueda y el
-   resultado deje de tener sentido fisico. Fijando n al valor urbano tipico la
-   solucion se vuelve estable: se verifico que la posicion estimada no cambia al
-   ampliar la region de busqueda de 2 km a 20 km.
-
-2) SE USAN LOS K PUNTOS MAS FUERTES. Lejos del emisor la medida la dominan otras
-   fuentes y la sombra urbana, y el modelo de una sola fuente deja de aplicar.
-   Cerca, el gradiente de potencia si responde a la geometria. Restringirse al
-   entorno del maximo es el equivalente radioelectrico de ajustar una curva solo
-   donde la senal supera el ruido.
-
-3) SE USA LA POTENCIA DE PICO DEL CANAL, no la potencia media de Parseval. El
-   pico corresponde a la portadora dominante, que es la que efectivamente
-   proviene de UN emisor; la potencia media integra 5 MHz donde conviven varios.
-
-Como contraste independiente se calcula ademas el CENTROIDE PONDERADO POR
-POTENCIA, un estimador robusto que siempre cae dentro del area medida y que
-sirve para validar la direccion obtenida por el ajuste.
+SE FIJA EL EXPONENTE DE PROPAGACION
+------------------------------------
+n se fija al valor urbano tipico. Dejandolo libre, n y la distancia resultan
+practicamente intercambiables -un transmisor lejano y potente con n bajo produce
+casi el mismo perfil que uno cercano y debil con n alto- y el optimizador
+empuja la solucion contra el borde de la region de busqueda.
 """
 
 import os
@@ -70,15 +76,19 @@ from scipy.optimize import minimize
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "etl"))
 import config as cfg
 
-K_PUNTOS = 12                   # numero de puntos mas fuertes usados en el ajuste
-MARGEN_BUSQUEDA_M = 8000.0      # extension de la malla mas alla de la ruta
-N_MALLA = 90                    # resolucion del barrido grueso por eje
-N_BOOTSTRAP = 300               # repeticiones para la incertidumbre
+RADIO_FOCO_M = 1500.0       # radio de influencia usado para el ajuste local
+RADIO_VECINDAD_M = 900.0    # radio para declarar un punto maximo local
+MARGEN_BUSQUEDA_M = 3000.0  # extension de la malla alrededor del foco
+N_MALLA = 121               # resolucion del barrido grueso por eje
+N_BOOTSTRAP = 300           # repeticiones para la incertidumbre
 
 ROSA = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
         "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
 
 
+# ---------------------------------------------------------------------------
+# GEOMETRIA
+# ---------------------------------------------------------------------------
 def a_metros(lat, lon, lat0, lon0):
     """
     Proyeccion equirectangular local (plano tangente) centrada en (lat0, lon0).
@@ -105,128 +115,258 @@ def rumbo(acimut_deg):
     return ROSA[int(round(acimut_deg / 22.5)) % 16]
 
 
-def _p0_optimo(d, p_obs, n):
+# ---------------------------------------------------------------------------
+# PASO 1: DETECCION DE FOCOS
+# ---------------------------------------------------------------------------
+def detectar_focos(x, y, p_dbm, radio=RADIO_VECINDAD_M, umbral=None):
     """
-    Con la posicion y el exponente fijos, la potencia de referencia P_0 tiene
-    solucion cerrada: es la media de P_obs + 10*n*log10(d/d_0).
+    Encuentra los maximos locales del campo de potencia medido.
+
+    Un punto es foco si supera el umbral de ocupacion y ninguno de sus vecinos
+    dentro de 'radio' tiene mas potencia. Cada foco corresponde, en la practica,
+    al entorno de una estacion base.
+
+    Devuelve los indices de los focos, ordenados de mayor a menor potencia.
+    """
+    umbral = cfg.UMBRAL_OCUPACION_DBM if umbral is None else umbral
+    focos = []
+    for i in range(len(p_dbm)):
+        if p_dbm[i] <= umbral:
+            continue
+        d = np.hypot(x - x[i], y - y[i])
+        vecinos = (d > 0) & (d <= radio)
+        if vecinos.sum() >= 2 and p_dbm[i] >= p_dbm[vecinos].max():
+            focos.append(i)
+    return sorted(focos, key=lambda i: -p_dbm[i])
+
+
+# ---------------------------------------------------------------------------
+# PASO 2: AJUSTE DEL MODELO DE PROPAGACION
+# ---------------------------------------------------------------------------
+def modelo_potencia(x, y, xs, ys, p0, n, ruido_dbm):
+    """
+    Potencia predicha en (x, y) por un emisor situado en (xs, ys).
+
+        P(d) = 10*log10( 10^((P0 - 10*n*log10(d/d0))/10) + 10^(ruido/10) )
+
+    La suma del PISO DE RUIDO dentro del logaritmo es lo que distingue este
+    modelo del log-distancia puro, y es fisicamente necesaria: un receptor real
+    nunca mide menos que su propio ruido, de modo que lejos del emisor la
+    potencia observada se aplana en el piso en lugar de seguir cayendo hacia
+    menos infinito. Sin ese termino, los puntos lejanos -que estan todos en el
+    piso y no aportan informacion de distancia- tiran del ajuste como si
+    todavia siguieran la ley de propagacion, y sesgan la posicion estimada.
+
+    La suma se hace en potencia LINEAL, que es donde las contribuciones de
+    senal y ruido son aditivas.
+    """
+    d = np.maximum(np.hypot(x - xs, y - ys), 10.0)
+    senal_mw = 10.0 ** ((p0 - 10.0 * n * np.log10(d / cfg.D0_M)) / 10.0)
+    ruido_mw = 10.0 ** (ruido_dbm / 10.0)
+    return 10.0 * np.log10(senal_mw + ruido_mw)
+
+
+def _p0_inicial(d, p_obs, n):
+    """
+    Semilla para P_0: la solucion cerrada del modelo SIN piso de ruido.
+
+    Al anadir el termino de ruido, P_0 deja de tener solucion analitica y pasa
+    a ajustarse junto con la posicion, pero este valor sigue siendo un buen
+    punto de partida para el optimizador.
     """
     return float(np.mean(p_obs + 10.0 * n * np.log10(d / cfg.D0_M)))
 
 
-def _sse(pos, x, y, p_obs, n):
-    """Suma de cuadrados del error para una posicion candidata de la fuente."""
-    d = np.maximum(np.hypot(x - pos[0], y - pos[1]), cfg.D0_M / 10.0)
-    p0 = _p0_optimo(d, p_obs, n)
-    r = p_obs - (p0 - 10.0 * n * np.log10(d / cfg.D0_M))
+def _sse(params, x, y, p_obs, n, ruido_dbm):
+    """Suma de cuadrados del error para (xs, ys, P0) candidatos."""
+    xs, ys, p0 = params
+    r = p_obs - modelo_potencia(x, y, xs, ys, p0, n, ruido_dbm)
     return float(r @ r)
 
 
-def centroide_ponderado(lat, lon, p_dbm):
+def _sse_pos(pos, x, y, p_obs, n, ruido_dbm):
     """
-    Centro de masa de la potencia: promedio de las posiciones pesado por la
-    potencia LINEAL de cada punto. Estimador robusto e independiente del modelo
-    de propagacion, util para validar la direccion del ajuste.
+    Error para una posicion candidata, optimizando P_0 por dentro.
+
+    Se usa en el barrido grueso: recorrer la malla resolviendo P_0 en cada
+    celda es mucho mas rapido que optimizar las tres variables a la vez, y
+    localiza bien la cuenca del minimo antes del refinamiento.
     """
-    w = 10.0 ** (np.asarray(p_dbm) / 10.0)
-    return float(np.average(lat, weights=w)), float(np.average(lon, weights=w))
+    d = np.maximum(np.hypot(x - pos[0], y - pos[1]), 10.0)
+    p0 = _p0_inicial(d, p_obs, n)
+    mejor = np.inf
+    for ajuste in (-6.0, -3.0, 0.0, 3.0, 6.0):
+        s = _sse((pos[0], pos[1], p0 + ajuste), x, y, p_obs, n, ruido_dbm)
+        mejor = min(mejor, s)
+    return mejor
 
 
-def localizar_fuente(lat, lon, p_dbm, etiqueta="", n=cfg.EXP_PERDIDA_N, k=K_PUNTOS):
+def gradiente_local(x, y, p_dbm, i_foco, radio):
     """
-    Estima la posicion de la fuente que mejor explica las potencias observadas.
+    Mide si alrededor del foco la potencia decae realmente con la distancia.
 
-    Devuelve un diccionario con la posicion estimada, los parametros del modelo
-    de propagacion, la bondad del ajuste, el acimut y la incertidumbre.
+    Es la prueba previa que decide si tiene sentido ajustar el modelo: devuelve
+    la correlacion entre la potencia observada y -log10(distancia al foco). Un
+    valor alto significa que el entorno se comporta como el campo de un emisor
+    cercano; un valor bajo, que ahi conviven varios y el modelo no aplica.
+    """
+    d = np.hypot(x - x[i_foco], y - y[i_foco])
+    sel = d <= radio
+    if sel.sum() < 4:
+        return np.nan, sel
+    return float(np.corrcoef(p_dbm[sel], -np.log10(np.maximum(d[sel], 20.0)))[0, 1]), sel
+
+
+def localizar_emisor(lat, lon, p_dbm, etiqueta="", n=cfg.EXP_PERDIDA_N,
+                     radio=RADIO_FOCO_M):
+    """
+    Localiza el emisor dominante de un canal a partir del gradiente local.
+
+    Devuelve un diccionario con el foco de partida, la posicion extrapolada del
+    emisor, la bondad del ajuste y la incertidumbre por bootstrap.
     """
     lat, lon, p_dbm = map(np.asarray, (lat, lon, p_dbm))
-
-    # Centroide de la ruta completa: es el origen del sistema local y el punto
-    # desde el que se reporta el acimut hacia la fuente.
     lat0, lon0 = float(lat.mean()), float(lon.mean())
+    x, y = a_metros(lat, lon, lat0, lon0)
 
-    # Seleccion de los k puntos mas fuertes (ver decision de modelado 2)
-    sel = np.argsort(p_dbm)[-min(k, len(p_dbm)):]
-    lat_f, lon_f, p_f = lat[sel], lon[sel], p_dbm[sel]
-    x, y = a_metros(lat_f, lon_f, lat0, lon0)
+    # --- focos del canal ---------------------------------------------------
+    focos = detectar_focos(x, y, p_dbm)
+    i = focos[0] if focos else int(np.argmax(p_dbm))
 
-    # --- Etapa 1: barrido grueso de la malla -------------------------------
-    gx = np.linspace(x.min() - MARGEN_BUSQUEDA_M, x.max() + MARGEN_BUSQUEDA_M, N_MALLA)
-    gy = np.linspace(y.min() - MARGEN_BUSQUEDA_M, y.max() + MARGEN_BUSQUEDA_M, N_MALLA)
-    GX, GY = np.meshgrid(gx, gy)
+    # --- validez del gradiente antes de ajustar ----------------------------
+    r_grad, sel = gradiente_local(x, y, p_dbm, i, radio)
+    if sel.sum() < 4:
+        sel = np.argsort(np.hypot(x - x[i], y - y[i]))[:6]
+        sel = np.isin(np.arange(len(x)), sel)
+        r_grad, _ = gradiente_local(x, y, p_dbm, i, radio * 2)
 
+    xs_, ys_, p_ = x[sel], y[sel], p_dbm[sel]
+
+    # Piso de ruido del canal, estimado sobre TODA la ruta: es el nivel por
+    # debajo del cual el receptor ya no distingue senal, y define donde el
+    # modelo deja de decaer.
+    ruido_dbm = float(np.percentile(p_dbm, 5))
+
+    # --- barrido grueso alrededor del foco ---------------------------------
+    g = np.linspace(-MARGEN_BUSQUEDA_M, MARGEN_BUSQUEDA_M, N_MALLA)
     mejor, mejor_sse = None, np.inf
-    for xs, ys in zip(GX.ravel(), GY.ravel()):
-        s = _sse((xs, ys), x, y, p_f, n)
-        if s < mejor_sse:
-            mejor_sse, mejor = s, (xs, ys)
+    for dx in g:
+        for dy in g:
+            s = _sse_pos((x[i] + dx, y[i] + dy), xs_, ys_, p_, n, ruido_dbm)
+            if s < mejor_sse:
+                mejor_sse, mejor = s, (x[i] + dx, y[i] + dy)
 
-    # --- Etapa 2: refinamiento local ---------------------------------------
-    opt = minimize(_sse, mejor, args=(x, y, p_f, n), method="Nelder-Mead",
-                   options={"maxiter": 6000, "xatol": 1e-2, "fatol": 1e-6})
-    xs, ys = opt.x
+    # --- refinamiento conjunto de posicion y potencia de referencia --------
+    d0 = np.maximum(np.hypot(xs_ - mejor[0], ys_ - mejor[1]), 10.0)
+    semilla = (mejor[0], mejor[1], _p0_inicial(d0, p_, n))
+    opt = minimize(_sse, semilla, args=(xs_, ys_, p_, n, ruido_dbm),
+                   method="Nelder-Mead",
+                   options={"maxiter": 8000, "xatol": 1e-2, "fatol": 1e-5})
+    px, py, p0 = opt.x
 
-    d = np.maximum(np.hypot(x - xs, y - ys), cfg.D0_M / 10.0)
-    p0 = _p0_optimo(d, p_f, n)
-    r = p_f - (p0 - 10.0 * n * np.log10(d / cfg.D0_M))
-    rmse = float(np.sqrt((r @ r) / len(r)))
-    sst = float(((p_f - p_f.mean()) ** 2).sum())
-    r2 = 1.0 - float(r @ r) / sst if sst > 0 else np.nan
+    res = p_ - modelo_potencia(xs_, ys_, px, py, p0, n, ruido_dbm)
+    rmse = float(np.sqrt((res @ res) / len(res)))
+    sst = float(((p_ - p_.mean()) ** 2).sum())
+    r2 = 1.0 - float(res @ res) / sst if sst > 0 else np.nan
 
-    # --- Etapa 3: incertidumbre por bootstrap ------------------------------
+    # --- incertidumbre por bootstrap ---------------------------------------
     rng = np.random.default_rng(20262)
     muestras = []
     for _ in range(N_BOOTSTRAP):
-        idx = rng.integers(0, len(x), len(x))
-        o = minimize(_sse, (xs, ys), args=(x[idx], y[idx], p_f[idx], n),
+        idx = rng.integers(0, len(xs_), len(xs_))
+        o = minimize(_sse, (px, py, p0),
+                     args=(xs_[idx], ys_[idx], p_[idx], n, ruido_dbm),
                      method="Nelder-Mead",
-                     options={"maxiter": 800, "xatol": 1e-1, "fatol": 1e-3})
-        muestras.append(o.x)
+                     options={"maxiter": 900, "xatol": 1e-1, "fatol": 1e-3})
+        muestras.append(o.x[:2])
     muestras = np.array(muestras)
-    radio95 = float(np.percentile(np.hypot(muestras[:, 0] - xs, muestras[:, 1] - ys), 95))
+    radio95 = float(np.percentile(np.hypot(muestras[:, 0] - px, muestras[:, 1] - py), 95))
 
-    lat_s, lon_s = a_grados(xs, ys, lat0, lon0)
-    acimut = float(np.degrees(np.arctan2(xs, ys)) % 360.0)
-    distancia = float(np.hypot(xs, ys))
-
-    # Distancia de la fuente al punto mas cercano de TODA la ruta: si es grande,
-    # la estimacion es una verdadera extrapolacion fuera del recorrido.
-    xr, yr = a_metros(lat, lon, lat0, lon0)
-    d_min_ruta = float(np.hypot(xr - xs, yr - ys).min())
-
-    lat_c, lon_c = centroide_ponderado(lat, lon, p_dbm)
+    lat_e, lon_e = a_grados(px, py, lat0, lon0)
+    acimut = float(np.degrees(np.arctan2(px - x[i], py - y[i])) % 360.0)
 
     return {
         "etiqueta": etiqueta,
-        "latitud": float(lat_s),
-        "longitud": float(lon_s),
+        "n_focos": len(focos),
+        "foco": "",                                   # lo rellena main()
+        "foco_lat": float(lat[i]), "foco_lon": float(lon[i]),
+        "foco_dbm": float(p_dbm[i]),
+        "latitud": float(lat_e), "longitud": float(lon_e),
         "P0_dbm_a_100m": p0,
         "exponente_n": float(n),
-        "rmse_db": rmse,
-        "r2": float(r2),
-        "n_puntos_usados": int(len(x)),
-        "acimut_deg": acimut,
-        "rumbo": rumbo(acimut),
-        "distancia_al_centroide_m": distancia,
+        "n_puntos_usados": int(sel.sum()),
+        "corr_gradiente": float(r_grad),
+        "rmse_db": rmse, "r2": float(r2),
+        "acimut_deg": acimut, "rumbo": rumbo(acimut),
+        "dist_al_foco_m": float(np.hypot(px - x[i], py - y[i])),
         "radio_incertidumbre_95_m": radio95,
-        "dist_minima_a_la_ruta_m": d_min_ruta,
-        "fuera_de_la_ruta": bool(d_min_ruta > 200.0),
-        "centroide_lat": lat_c,
-        "centroide_lon": lon_c,
+        "dist_minima_a_la_ruta_m": float(np.hypot(x - px, y - py).min()),
     }
 
 
+def identificabilidad_global(lat, lon, p_dbm, n=cfg.EXP_PERDIDA_N):
+    """
+    Contraste que demuestra que una sola fuente NO explica el campo.
+
+    Ajusta el modelo de fuente unica usando TODOS los puntos de la ruta y
+    devuelve su R2. Un valor bajo es la evidencia de que la contaminacion
+    proviene de una red distribuida y no de un emisor aislado.
+    """
+    lat, lon, p_dbm = map(np.asarray, (lat, lon, p_dbm))
+    lat0, lon0 = float(lat.mean()), float(lon.mean())
+    x, y = a_metros(lat, lon, lat0, lon0)
+
+    ruido_dbm = float(np.percentile(p_dbm, 5))
+
+    g = np.linspace(-8000, 8000, 80)
+    mejor, mejor_sse = None, np.inf
+    for dx in g:
+        for dy in g:
+            s = _sse_pos((dx, dy), x, y, p_dbm, n, ruido_dbm)
+            if s < mejor_sse:
+                mejor_sse, mejor = s, (dx, dy)
+
+    d0 = np.maximum(np.hypot(x - mejor[0], y - mejor[1]), 10.0)
+    opt = minimize(_sse, (mejor[0], mejor[1], _p0_inicial(d0, p_dbm, n)),
+                   args=(x, y, p_dbm, n, ruido_dbm), method="Nelder-Mead",
+                   options={"maxiter": 5000})
+    px, py, p0 = opt.x
+
+    res = p_dbm - modelo_potencia(x, y, px, py, p0, n, ruido_dbm)
+    sst = float(((p_dbm - p_dbm.mean()) ** 2).sum())
+    r2 = 1.0 - float(res @ res) / sst
+
+    # Prueba adicional: el punto mas potente deberia ser el mas cercano
+    i_max = int(np.argmax(p_dbm))
+    orden = np.argsort(np.hypot(x - px, y - py))
+    puesto = int(np.where(orden == i_max)[0][0]) + 1
+    corr = float(np.corrcoef(p_dbm, -np.log10(np.maximum(np.hypot(x - px, y - py), 10)))[0, 1])
+    return {"r2": r2, "rmse_db": float(np.sqrt((res @ res) / len(res))),
+            "puesto_del_maximo": puesto, "n_puntos": len(x), "corr_p_logd": corr}
+
+
+# ---------------------------------------------------------------------------
+# INTERPRETACION
+# ---------------------------------------------------------------------------
 def clasificar_confianza(r):
     """
-    Traduce la bondad del ajuste a un nivel de confianza interpretable.
+    Confianza del resultado, derivada de tres comprobaciones.
 
-    Un RMSE alto o un R2 bajo significan que el patron espacial no responde a
-    UNA sola fuente puntual: puede haber varios emisores simultaneos en el
-    bloque, o la ruta no rodea lo suficiente al transmisor (mala dilucion
-    geometrica de la precision).
+    1. El GRADIENTE pesa mas que el ajuste: si la potencia no decae con la
+       distancia alrededor del foco, el resultado no significa nada por bueno
+       que sea su residuo.
+    2. El AJUSTE (R2 y residuo) mide cuanto del patron queda explicado.
+    3. La INCERTIDUMBRE actua como veto. Si el radio del 95 % supera el propio
+       radio de ajuste, la estimacion no esta localizando nada: el intervalo es
+       mas grande que la zona sobre la que se calculo, de modo que la posicion
+       concreta carece de valor practico aunque el ajuste parezca aceptable.
+       Ese caso se degrada a confianza BAJA.
     """
-    if r["r2"] >= 0.6 and r["rmse_db"] <= 5.0:
+    if r["radio_incertidumbre_95_m"] > RADIO_FOCO_M:
+        return "BAJA"
+    if r["corr_gradiente"] >= 0.65 and r["r2"] >= 0.60 and r["rmse_db"] <= 7.0:
         return "ALTA"
-    if r["r2"] >= 0.25 and r["rmse_db"] <= 8.0:
+    if r["corr_gradiente"] >= 0.45 and r["r2"] >= 0.35 and r["rmse_db"] <= 12.0:
         return "MEDIA"
     return "BAJA"
 
@@ -234,70 +374,117 @@ def clasificar_confianza(r):
 def interpretacion(r):
     """Frase de lectura tecnica del resultado, para el informe y el dashboard."""
     if r["confianza"] == "ALTA":
-        return ("Emisor unico dominante bien resuelto: a %.1f km del centro de la ruta en direccion "
-                "%s (acimut %.0f grados), con incertidumbre de %.0f m."
-                % (r["distancia_al_centroide_m"] / 1000.0, r["rumbo"], r["acimut_deg"],
+        return ("Emisor dominante bien resuelto. El campo alrededor del foco decae con la "
+                "distancia como predice el modelo (correlacion %.2f), y el ajuste situa el "
+                "transmisor a %.0f m del punto de medicion mas potente, en direccion %s. "
+                "Incertidumbre de %.0f m."
+                % (r["corr_gradiente"], r["dist_al_foco_m"], r["rumbo"],
                    r["radio_incertidumbre_95_m"]))
     if r["confianza"] == "MEDIA":
-        return ("Direccion del foco bien determinada (%s, acimut %.0f grados) pero la distancia es "
-                "menos precisa: el bloque probablemente contiene mas de un emisor activo."
-                % (r["rumbo"], r["acimut_deg"]))
-    return ("El patron espacial no se explica por una sola fuente puntual (R2 = %.2f, RMSE = %.1f dB). "
-            "Se reporta unicamente la direccion predominante (%s) como indicio, y se recomienda "
-            "goniometria en sitio para confirmar." % (r["r2"], r["rmse_db"], r["rumbo"]))
+        return ("Foco bien identificado pero emisor resuelto solo de forma aproximada "
+                "(correlacion del gradiente %.2f, R2 %.2f). La zona es correcta; la posicion "
+                "exacta dentro de ella requiere una medicion complementaria."
+                % (r["corr_gradiente"], r["r2"]))
+    if r["radio_incertidumbre_95_m"] > RADIO_FOCO_M:
+        return ("No se resuelve un emisor unico en este canal. La incertidumbre de la posicion "
+                "(%.0f m) supera la propia zona sobre la que se calculo, senal de que hay mas de "
+                "una emision activa alrededor del foco: se observan puntos lejanos mas fuertes que "
+                "otros mas cercanos, lo que ningun transmisor aislado puede producir. Se reporta el "
+                "foco medido (%s) como zona de interes, no una posicion de transmisor."
+                % (r["radio_incertidumbre_95_m"], r["foco"] or "el maximo medido"))
+    return ("No se resuelve un emisor unico en este canal: alrededor del foco conviven varias "
+            "emisiones y la potencia no decae de forma limpia con la distancia (correlacion "
+            "%.2f, residuo %.1f dB). Se reporta el foco medido como zona de interes, no una "
+            "posicion de transmisor." % (r["corr_gradiente"], r["rmse_db"]))
 
 
+# ---------------------------------------------------------------------------
 def main():
     cfg.crear_directorios()
     ind = pd.read_parquet(os.path.join(cfg.LAKE_ORO, "indicadores_por_punto.parquet"))
     perfil = pd.read_parquet(os.path.join(cfg.LAKE_ORO, "perfil_espectral.parquet"))
+    lat = ind["latitud"].to_numpy()
+    lon = ind["longitud"].to_numpy()
 
-    print("[EXTRAPOLACION] Localizando fuentes por multilateracion RSS")
-    print("  Modelo: P(d) = P0 - 10*%.1f*log10(d/%.0f m) | %d puntos mas fuertes por canal\n"
-          % (cfg.EXP_PERDIDA_N, cfg.D0_M, K_PUNTOS))
+    print("[EXTRAPOLACION] Localizacion de fuentes de contaminacion")
+    print("  Modelo: P(d) = 10*log10( 10^((P0 - 10*%.1f*log10(d/%.0f m))/10) + 10^(ruido/10) )"
+          % (cfg.EXP_PERDIDA_N, cfg.D0_M))
+    print("  El termino de ruido impide que los puntos lejanos, que estan todos en el")
+    print("  piso del receptor, tiren del ajuste como si aun siguieran la ley de propagacion.")
+    print("  Ajuste sobre los puntos a menos de %.0f m del foco dominante\n" % RADIO_FOCO_M)
 
+    # --- Contraste previo: una sola fuente NO explica el campo -------------
+    print("  " + "-" * 72)
+    print("  CONTRASTE: ajuste de FUENTE UNICA sobre los %d puntos de la ruta" % len(ind))
+    print("  " + "-" * 72)
+    globales = []
+    for canal in cfg.CANALES:
+        g = identificabilidad_global(lat, lon, ind["Ppico_%s_dbm" % canal].to_numpy())
+        g["canal"] = canal
+        globales.append(g)
+        print("    Canal %s: R2 = %+.3f | residuo %.1f dB | el punto mas potente queda "
+              "en el puesto %d de %d por cercania"
+              % (canal, g["r2"], g["rmse_db"], g["puesto_del_maximo"], g["n_puntos"]))
+    print("\n    => Una sola fuente no explica el campo medido. La contaminacion")
+    print("       proviene de una RED de emisores, no de un transmisor aislado.\n")
+
+    # --- Localizacion por gradiente local ----------------------------------
     resultados = []
     for canal in cfg.CANALES:
-        r = localizar_fuente(ind["latitud"].to_numpy(), ind["longitud"].to_numpy(),
-                             ind["Ppico_%s_dbm" % canal].to_numpy(), "Canal %s" % canal)
+        v = ind["Ppico_%s_dbm" % canal].to_numpy()
+        r = localizar_emisor(lat, lon, v, "Canal %s" % canal)
+        x, y = a_metros(lat, lon, lat.mean(), lon.mean())
+        focos = detectar_focos(x, y, v)
+        r["foco"] = ind["archivo"].iloc[focos[0] if focos else int(np.argmax(v))]
         r["canal"] = canal
-        r["banda"] = "%.0f - %.0f MHz" % (cfg.CANALES[canal][0] / 1e6, cfg.CANALES[canal][1] / 1e6)
+        r["banda"] = "%.0f - %.0f MHz" % (cfg.CANALES[canal][0] / 1e6,
+                                          cfg.CANALES[canal][1] / 1e6)
+        r["r2_fuente_unica"] = [g["r2"] for g in globales if g["canal"] == canal][0]
         r["confianza"] = clasificar_confianza(r)
         r["interpretacion"] = interpretacion(r)
         resultados.append(r)
 
-    # --- Fuente de la frecuencia mas contaminada ---------------------------
+    # --- Frecuencia mas contaminada ----------------------------------------
     pn = (perfil.P_media_dbm - perfil.P_media_dbm.min()) / \
          (perfil.P_media_dbm.max() - perfil.P_media_dbm.min())
     peor = perfil.assign(puntaje=0.7 * pn + 0.3 * perfil.ocupacion_pct / 100.0) \
                  .sort_values("puntaje", ascending=False).iloc[0]
-
     df = pd.read_parquet(os.path.join(cfg.LAKE_PLATA, "medidas_limpias.parquet"))
-    rf = localizar_fuente(df["latitud"].to_numpy(), df["longitud"].to_numpy(),
-                          df["bin_%04d" % int(peor["bin"])].to_numpy(),
+    v = df["bin_%04d" % int(peor["bin"])].to_numpy()
+    rf = localizar_emisor(df["latitud"].to_numpy(), df["longitud"].to_numpy(), v,
                           "Frecuencia %.4f MHz" % peor["frecuencia_mhz"])
+    x, y = a_metros(df["latitud"].to_numpy(), df["longitud"].to_numpy(),
+                    df["latitud"].mean(), df["longitud"].mean())
+    focos = detectar_focos(x, y, v)
+    rf["foco"] = df["archivo"].iloc[focos[0] if focos else int(np.argmax(v))]
     rf["canal"] = "F_MAX"
     rf["banda"] = "%.4f MHz" % peor["frecuencia_mhz"]
+    rf["r2_fuente_unica"] = np.nan
     rf["confianza"] = clasificar_confianza(rf)
     rf["interpretacion"] = interpretacion(rf)
     resultados.append(rf)
 
+    # --- Reporte -----------------------------------------------------------
     for r in resultados:
-        print("  %-10s (%s)" % (r["etiqueta"], r["banda"]))
-        print("    Fuente estimada : %.6f , %.6f   [%s a %.2f km, acimut %.0f grados]"
-              % (r["latitud"], r["longitud"], r["rumbo"],
-                 r["distancia_al_centroide_m"] / 1000.0, r["acimut_deg"]))
-        print("    Modelo ajustado : P0 = %.1f dBm a %.0f m, n = %.2f (fijo)"
-              % (r["P0_dbm_a_100m"], cfg.D0_M, r["exponente_n"]))
-        print("    Bondad          : RMSE = %.2f dB, R2 = %.3f -> confianza %s"
-              % (r["rmse_db"], r["r2"], r["confianza"]))
-        print("    Incertidumbre   : +/- %.0f m (95%%) | %.0f m del punto mas cercano de la ruta"
+        print("  %s (%s)" % (r["etiqueta"], r["banda"]))
+        print("    Focos detectados : %d maximos locales en la ruta" % r["n_focos"])
+        print("    Foco dominante   : %s en %.6f, %.6f  (%.1f dBm)"
+              % (r["foco"], r["foco_lat"], r["foco_lon"], r["foco_dbm"]))
+        print("    Gradiente local  : corr(P, -log d) = %+.2f sobre %d puntos"
+              % (r["corr_gradiente"], r["n_puntos_usados"]))
+        print("    Emisor estimado  : %.6f, %.6f  -> %s a %.0f m del foco"
+              % (r["latitud"], r["longitud"], r["rumbo"], r["dist_al_foco_m"]))
+        print("    Bondad           : R2 = %+.3f, RMSE = %.2f dB -> confianza %s"
+              % (r["r2"], r["rmse_db"], r["confianza"]))
+        print("    Incertidumbre    : +/- %.0f m (95%%) | %.0f m del punto mas cercano de la ruta"
               % (r["radio_incertidumbre_95_m"], r["dist_minima_a_la_ruta_m"]))
-        print("    Lectura tecnica : %s\n" % r["interpretacion"])
+        print("    Lectura tecnica  : %s\n" % r["interpretacion"])
 
     F = pd.DataFrame(resultados)
     F.to_csv(os.path.join(cfg.LAKE_ORO, "fuentes_estimadas.csv"), index=False, encoding="utf-8")
-    print("[EXTRAPOLACION] Fuentes guardadas en la capa oro.\n")
+    pd.DataFrame(globales).to_csv(os.path.join(cfg.LAKE_ORO, "contraste_fuente_unica.csv"),
+                                  index=False, encoding="utf-8")
+    print("[EXTRAPOLACION] Resultados guardados en la capa oro.\n")
     return F
 
 

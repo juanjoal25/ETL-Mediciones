@@ -12,13 +12,10 @@ ORDEN DE OPERACIONES (importa, y esta justificado)
   P1  T1 - Imputacion de la fuga de oscilador local (dominio frecuencia).
   P2  T2 - Imputacion de georreferenciacion (dominio espacio-temporal).
   P3  T3 - Calibracion por desacople de antena (correccion determinista).
-  P4  T4 - Regla de negocio del enunciado: valores < -65.0 dBm -> -95.0 dBm.
 
 Se corrigen primero los artefactos instrumentales (P1) y despues se calibra
 (P3), porque la calibracion es un desplazamiento en nivel que no tiene sentido
-aplicar sobre un espurio. La regla de censura del enunciado (P4) va de ultima
-porque opera sobre la medida ya calibrada, que es la que representa la potencia
-realmente incidente sobre la antena.
+aplicar sobre un espurio.
 
 TECNICAS DE IMPUTACION EMPLEADAS
 --------------------------------
@@ -34,8 +31,15 @@ TECNICAS DE IMPUTACION EMPLEADAS
       calculada del barrido S11 medido con el Agilent N9914A. No es imputacion
       sino correccion sistematica: compensa un sesgo dependiente de frecuencia
       que favorecia artificialmente al canal A frente al canal D.
-  T4  Sustitucion por valor constante (censura del piso de ruido) impuesta por
-      el enunciado: toda muestra por debajo de -65.0 dBm se lleva a -95.0 dBm.
+
+NOTA SOBRE EL PISO DE RUIDO
+---------------------------
+No se aplica ninguna censura al piso de ruido. Se evaluo sustituir las muestras
+mas debiles por un valor constante y se descarto: la potencia de Parseval se
+calcula como una suma en el dominio LINEAL, dominada por los bins fuertes, de
+modo que recortar el ruido del receptor desplaza el indicador de cada canal
+menos de 0.1 dB y no altera en nada la clasificacion. Censurar habria anadido
+un parametro arbitrario al proceso sin ganancia alguna en la deteccion.
 """
 
 import os
@@ -172,33 +176,10 @@ def calibrar_antena(S, frecuencias, df_antena):
 
 
 # ---------------------------------------------------------------------------
-# T4 - REGLA DE CENSURA DEL ENUNCIADO
-# ---------------------------------------------------------------------------
-def aplicar_regla_piso(S):
-    """
-    Regla del enunciado: toda muestra < -65.0 dBm se sustituye por -95.0 dBm.
-
-    Interpretacion tecnica: el enunciado fija en -65 dBm el umbral de deteccion
-    util del sistema de monitoreo. Por debajo de ese nivel no se puede afirmar
-    que exista emision, solo ruido del receptor, de modo que la muestra se
-    censura llevandola a un piso convencional de -95 dBm. El efecto practico es
-    eliminar la contribucion del ruido termico a la suma de Parseval, que de
-    otro modo acumularia 256 bins de ruido por canal y enmascararia la
-    diferencia entre un canal limpio y uno ocupado.
-
-    Devuelve (S_censurado, n_celdas_modificadas)
-    """
-    S = S.copy()
-    mascara = S < cfg.UMBRAL_PISO_DBM
-    S[mascara] = cfg.VALOR_PISO_DBM
-    return S, int(mascara.sum())
-
-
-# ---------------------------------------------------------------------------
 # ORQUESTACION
 # ---------------------------------------------------------------------------
 def transformar(df_crudo, banderas, df_antena):
-    """Ejecuta P0..P4 y devuelve (df_limpio, bitacora, detalle_gps, correccion)."""
+    """Ejecuta P0..P3 y devuelve (df_limpio, bitacora, detalle_gps, meta)."""
     cols = [c for c in df_crudo.columns if c.startswith("bin_")]
     frecuencias = cfg.F_INICIO_HZ + np.arange(cfg.N_BINS) * cfg.RBW_HZ
     bitacora = []
@@ -251,20 +232,13 @@ def transformar(df_crudo, banderas, df_antena):
                   % (correccion[0] - correccion[-1]),
     })
 
-    # Sensibilidad: cuantas muestras cambian de lado del umbral por calibrar
-    cruces = int((((S < cfg.UMBRAL_PISO_DBM) & (S_cal >= cfg.UMBRAL_PISO_DBM)) |
-                  ((S >= cfg.UMBRAL_PISO_DBM) & (S_cal < cfg.UMBRAL_PISO_DBM))).sum())
+    # Sensibilidad de la calibracion: cuantas muestras cambian de lado del
+    # umbral de ocupacion de -60 dBm al des-incrustar la respuesta de antena.
+    # Es la medida honesta de cuanto importa esa correccion para el resultado.
+    cruces = int((((S < cfg.UMBRAL_OCUPACION_DBM) & (S_cal >= cfg.UMBRAL_OCUPACION_DBM)) |
+                  ((S >= cfg.UMBRAL_OCUPACION_DBM) & (S_cal < cfg.UMBRAL_OCUPACION_DBM))).sum())
 
-    # --- P4: regla de censura del enunciado ---------------------------------
-    S_final, n_piso = aplicar_regla_piso(S_cal)
-    bitacora.append({
-        "paso": "P4_REGLA_PISO",
-        "tecnica": "T4 Sustitucion por constante (censura de piso de ruido)",
-        "unidad": "celdas espectrales",
-        "cantidad": n_piso,
-        "motivo": "Regla del enunciado: muestras < %.1f dBm se llevan a %.1f dBm"
-                  % (cfg.UMBRAL_PISO_DBM, cfg.VALOR_PISO_DBM),
-    })
+    S_final = S_cal
 
     df[cols] = S_final
     # Se anexan las trazas de calidad de una sola vez para no fragmentar el frame
@@ -318,7 +292,7 @@ def main():
                  val["altura"][0], val["altura"][1]))
 
     print("\n  Mediciones conservadas : %d de %d" % (len(df), len(df_crudo)))
-    print("  Muestras que cruzan el umbral por la calibracion de antena: %d"
+    print("  Muestras que cruzan el umbral de ocupacion por la calibracion de antena: %d"
           % meta["cruces_umbral_por_calibracion"])
 
     df.to_parquet(os.path.join(cfg.LAKE_PLATA, "medidas_limpias.parquet"), index=False)
